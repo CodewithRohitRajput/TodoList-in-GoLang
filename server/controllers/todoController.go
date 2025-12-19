@@ -19,7 +19,11 @@ func Create(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
 	var todo models.Todo
-	json.NewDecoder(r.Body).Decode(&todo)
+	if err := json.NewDecoder(r.Body).Decode(&todo); err != nil{
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
 
 	todo.ID = primitive.NewObjectID()
 	todo.CreatedAt = time.Now()
@@ -27,7 +31,10 @@ func Create(w http.ResponseWriter, r *http.Request) {
 
 	_, err := config.TodoCollection.InsertOne(context.Background(), todo)
 	if err != nil {
-		log.Fatal(err)
+		log.Println("Error inserting todo:", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to create todo"})
+		return
 	}
 
 	w.WriteHeader(http.StatusCreated)
@@ -39,14 +46,29 @@ func GetAll(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
 	cursor, err := config.TodoCollection.Find(context.Background(), bson.M{})
-	if err != nil {
-		log.Fatal(err)
-	}
 
+	if err != nil {
+		log.Println("Error finding todos:" , err)
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error":"Failed to fetch todos"})
+		return
+	}
+	defer cursor.Close(context.Background());
+
+
+	
 	var todos []models.Todo
-	cursor.All(context.Background(), &todos)
+ if err :=	cursor.All(context.Background(), &todos); err != nil {
+	log.Println("Error decoding todos:" , err)
+	w.WriteHeader(http.StatusInternalServerError)
+	json.NewEncoder(w).Encode(map[string]string{"error":"Failed to decode todos"})
+	return
+ }
 	json.NewEncoder(w).Encode(todos)
 }
+
+
+
 
 func Delete(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
@@ -56,7 +78,9 @@ func Delete(w http.ResponseWriter, r *http.Request) {
 
 	objectId , err := primitive.ObjectIDFromHex(id)
 	if err != nil {
-		log.Fatal(err)
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error" : "Invalid Id"})
+		return
 	}
 
 	_, err = config.TodoCollection.DeleteOne(context.Background(), bson.M{"_id": objectId})
@@ -77,27 +101,37 @@ func GetById (w http.ResponseWriter , r *http.Request){
 	var todo models.Todo
 	objectId , err := primitive.ObjectIDFromHex(id)
 	if err != nil {
-		log.Fatal(err)
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error":"Invalid Id"})
+		return
 	}
 
 	err = config.TodoCollection.FindOne(context.Background() , bson.M{"_id" :objectId}).Decode(&todo)
 	if err != nil {
-		log.Fatal(err)
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{"error" : "Todo not found"})
+		return
 	}
 
+	
 	json.NewEncoder(w).Encode(todo);
-
 }
 
 
 func Update (w http.ResponseWriter , r *http.Request){
+
 	w.Header().Set("Content-Type" , "application/json")
 
 	vars := mux.Vars(r)
 	id  := vars["id"]
 
 	var todo models.Todo
-	json.NewDecoder(r.Body).Decode(&todo)
+
+	if err := json.NewDecoder(r.Body).Decode(&todo); err != nil{
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error":"Invalid todo data"})
+		return
+	}
 
 	update := bson.M{
 		"$set": bson.M{
@@ -108,12 +142,17 @@ func Update (w http.ResponseWriter , r *http.Request){
 
 	objectId , err := primitive.ObjectIDFromHex(id)
 	if err != nil {
-		log.Fatal(err)
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error":"Invalid Id"})
+			return
 	}
 
-	_, err = config.TodoCollection.UpdateOne(context.Background() , bson.M{"_id" : objectId} , update)
+
+	result, err := config.TodoCollection.UpdateOne(context.Background() , bson.M{"_id" : objectId} , update)
 	if err != nil {
-		log.Fatal(err)
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]string{"error":"Failed to update todo"})
+			return
 	}
-	json.NewEncoder(w).Encode("Successfull updated bruh")
-}
+	json.NewEncoder(w).Encode(result)
+	}
